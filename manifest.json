@@ -1,0 +1,25 @@
+{
+    "manifest_version": 3,
+    "name": "Marks Entry Helper",
+    "version": "1.3.0",
+    "description": "Keyboard-driven marks entry helper.",
+    "permissions": [],
+    "host_permissions": [
+        "https://teacherportal.diu.edu.bd/*"
+    ],
+    "content_scripts": [
+        {
+            "matches": [
+                "https://teacherportal.diu.edu.bd/*"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "run_at": "document_idle"
+        }
+    ],
+    "action": {
+        "default_title": "Marks Entry Helper",
+        "default_popup": "popup.html"
+    }
+}

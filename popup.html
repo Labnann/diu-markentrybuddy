@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+
+    <title>Marks Entry Helper</title>
+
+    <style>
+        body {
+            width: 340px;
+            margin: 0;
+            padding: 16px;
+            font-family: Arial, sans-serif;
+            color: #222;
+        }
+
+        h2 {
+            margin: 0 0 18px 0;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: bold;
+        }
+
+        select,
+        input {
+            box-sizing: border-box;
+            width: 100%;
+            padding: 9px;
+            margin-bottom: 15px;
+            border: 1px solid #aaa;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        input[readonly] {
+            background: #f7f7f7;
+            cursor: pointer;
+        }
+
+        .help {
+            margin-top: -9px;
+            margin-bottom: 15px;
+            font-size: 12px;
+            color: #666;
+            line-height: 1.4;
+        }
+
+        .buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        button {
+            flex: 1;
+            padding: 9px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        #save {
+            background: #333;
+            color: white;
+        }
+
+        #start {
+            background: #eee;
+        }
+
+        #clear {
+            width: 100%;
+            margin-top: 8px;
+            background: #eee;
+        }
+
+        #status {
+            margin-top: 12px;
+            font-size: 12px;
+            color: #555;
+        }
+    </style>
+</head>
+
+<body>
+
+<h2>Marks Entry</h2>
+
+<label for="field">
+    Field to update
+</label>
+
+<select id="field">
+
+    <option value="quiz1">
+        Quiz 1
+    </option>
+
+    <option value="quiz2">
+        Quiz 2
+    </option>
+
+    <option value="quiz3">
+        Quiz 3
+    </option>
+
+    <option value="presn">
+        Presentation
+    </option>
+
+    <option value="assign">
+        Assignment
+    </option>
+
+    <option value="mid">
+        Midterm
+    </option>
+
+    <option value="final">
+        Final
+    </option>
+
+    <option value="labPerformance">
+        Lab Performance
+    </option>
+
+    <option value="labReport">
+        Lab Report
+    </option>
+
+    <option value="labFinal">
+        Lab Final
+    </option>
+
+</select>
+
+
+<label for="fullMark">
+    Full mark (optional)
+</label>
+
+<input
+    id="fullMark"
+    type="number"
+    min="0"
+    step="any"
+    placeholder="Example: 40"
+>
+
+
+<label for="startHotkey">
+    Start-entry hotkey
+</label>
+
+<input
+    id="startHotkey"
+    type="text"
+    placeholder="Example: Alt+E"
+    readonly
+>
+
+<div class="help">
+    Press the desired key combination while this field is selected.
+</div>
+
+
+<label for="moveHotkey">
+    ID → Mark key
+</label>
+
+<input
+    id="moveHotkey"
+    type="text"
+    placeholder="Default: Space"
+    readonly
+>
+
+<div class="help">
+    This key moves focus from the ID field to the Mark field.
+</div>
+
+
+<label for="submitHotkey">
+    Submit mark key
+</label>
+
+<input
+    id="submitHotkey"
+    type="text"
+    placeholder="Default: Enter"
+    readonly
+>
+
+<div class="help">
+    This key submits the current ID and mark.
+</div>
+
+
+<div class="buttons">
+
+    <button id="save">
+        Save
+    </button>
+
+    <button id="start">
+        Save & Start
+    </button>
+
+</div>
+
+
+<button id="clear">
+    Clear Configuration
+</button>
+
+
+<div id="status"></div>
+
+
+<script src="popup.js"></script>
+
+</body>
+</html>
