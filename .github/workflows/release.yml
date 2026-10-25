@@ -1,0 +1,51 @@
+name: Build Browser Extensions
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Firefox and Chromium ZIPs
+        run: |
+          set -eu
+
+          mkdir -p dist
+
+          # Firefox
+          cp manifest-firefox.json manifest.json
+          zip -r dist/diu-markentrybuddy-firefox.zip . \
+            -x '.git/*' '.github/*' 'dist/*' \
+               'manifest-chrome.json' 'manifest-firefox.json' \
+               'build.sh'
+
+          # Chromium
+          cp manifest-chrome.json manifest.json
+          zip -r dist/diu-markentrybuddy-chromium.zip . \
+            -x '.git/*' '.github/*' 'dist/*' \
+               'manifest-chrome.json' 'manifest-firefox.json' \
+               'build.sh'
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-extension-builds
+          path: dist/*.zip
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
