@@ -1,25 +1,22 @@
-# Marks Entry Helper — 0.2a
+# Marks Entry Helper 0.3
 
-Keyboard-driven marks entry helper for the DIU teacher portal.
+A browser extension for entering marks on `teacherportal.diu.edu.bd` using the existing keyboard workflow or numeric-only speech recognition.
 
-## Install
+## Build and install
 
-### Firefox
-1. Open `about:debugging#/runtime/this-firefox`.
-2. Choose **Load Temporary Add-on…** and select `manifest.json` from the extracted directory.
+Run `./build.sh`. This creates two loadable builds from the same source folder:
 
-### Chrome
-1. Open `chrome://extensions/` and enable Developer mode.
-2. Choose **Load unpacked** and select the extracted directory.
+- Chrome: `dist/chrome/` — open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select this folder.
+- Firefox: `dist/firefox/` — open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on…**, and select `manifest.json` inside this folder.
 
-## Usage
+The source is shared; the only browser-specific file is the manifest background declaration (`manifest.json` for Chrome and `manifest-firefox.json` for Firefox).
 
-- Configure the target field, optional full mark, hotkeys, and speech pause in the extension popup.
-- Press `Alt+E` (default) to open the existing grade-entry flow.
-- Open the existing grade-entry dialog, then press `.` to toggle speech-to-entry. Say a three-digit student-ID suffix, pause, then say the mark. The recognized values are passed through the existing dialog validation and submission flow after the configured silence interval (default 1 second).
-- A bottom-right panel shows the last three successful entries while the entry dialog is open.
-- `W` marks a speech entry that was parsed as a best guess; verify those rows.
+## Speech entry
 
-Speech recognition uses Vosk Browser and the small English Vosk model. The first activation downloads the model through the extension service worker and caches it in extension-origin IndexedDB, avoiding page-origin CORS restrictions. Later activations reuse that cache. Microphone permission is required.
+Open the extension popup/settings to download and cache the Vosk English small model on first use. The first download can take a while. Start grade entry, then click **Enable speech entry** in the entry dialog. Speech recognition is only active while that dialog is open and enabled. The dialog minimizes to the bottom-right while a recent-entry panel stays at the bottom-left.
 
-**Version:** `0.2a` (`manifest.json` numeric version `0.2`, with `version_name` `0.2a`).
+Speak a three-digit student-ID suffix, pause, then speak the mark. The recognizer uses the supplied Vosk numeric grammar and `vosk-browser@0.0.7`; it is not general-purpose dictation. It accepts digit sequences (for example, “two nine zero”) and number phrases (for example, “two hundred ninety”), including decimal marks (for example, “ten point five”).
+
+By default, recognition fills the entry dialog and you press **Enter** to submit. Enable **Submit recognized entries automatically** in settings to submit after the configurable pause (default 1 second). Speech-derived entries are highlighted yellow in the recent-entry panel for checking. The panel displays the last three successful entries with student ID, field name, and mark. Click **Disable speech entry** to stop the microphone.
+
+The extension retains the existing entry workflow, full-mark validation, duplicate-entry check, and configurable keyboard controls.

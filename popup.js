@@ -12,6 +12,7 @@ const fullMark =
 
 const speechPause =
     document.getElementById("speechPause");
+const speechAutoSubmit = document.getElementById("speechAutoSubmit");
 
 const startHotkey =
     document.getElementById("startHotkey");
@@ -249,6 +250,7 @@ function readConfig() {
     const config = {
 
         speechPause: pauseSeconds,
+        speechAutoSubmit: speechAutoSubmit.checked,
 
         box:
             field.value,
@@ -412,6 +414,18 @@ clearButton.addEventListener(
  * Load current in-memory configuration.
  */
 
+// Opening extension settings prepares and caches the Vosk model on first use.
+(async () => {
+    try {
+        showStatus("Preparing speech model (first use may take a while)…");
+        const result = await EXT.runtime.sendMessage({type:"MEH_MODEL_META"});
+        if (!result?.ok) throw new Error(result?.error || "Model download failed.");
+        showStatus("Speech model is ready and cached.");
+    } catch (error) {
+        showStatus(`Speech model setup failed: ${error.message}`);
+    }
+})();
+
 (async function loadConfig() {
 
     try {
@@ -445,6 +459,7 @@ clearButton.addEventListener(
             config.fullMark ?? "";
 
         speechPause.value = config.speechPause ?? 1;
+        speechAutoSubmit.checked = !!config.speechAutoSubmit;
 
 
         startHotkey.value =

@@ -92,6 +92,7 @@ let gradeEntryRunning =
     false;
 
 let speechModeEnabled = false;
+let speechRecognitionReady = false;
 let speechRecognizer = null;
 let speechModel = null;
 let speechStream = null;
@@ -771,22 +772,29 @@ function hotkeyMatches(
 // ============================================================
 // RECENT ENTRIES + SPEECH STATUS
 // ============================================================
-function showEntryToast(entry) {
+function showEntryToast() {
     let panel = document.getElementById("meh-entry-history");
     if (!panel) {
         panel = document.createElement("div");
         panel.id = "meh-entry-history";
-        panel.style.cssText = "position:fixed;right:14px;bottom:14px;z-index:1000001;width:260px;background:#fff;color:#222;border:1px solid #bbb;border-radius:8px;box-shadow:0 4px 18px #0003;padding:10px 12px;font:13px Arial,sans-serif;";
+        panel.style.cssText = "position:fixed;left:14px;bottom:14px;z-index:1000001;width:285px;max-width:calc(100vw - 28px);background:#fff;color:#222;border:1px solid #bbb;border-radius:8px;box-shadow:0 4px 18px #0003;padding:10px 12px;font:13px Arial,sans-serif;";
         document.body.appendChild(panel);
     }
     if (!document.getElementById("grade-entry-overlay")) { panel.remove(); return; }
-    panel.innerHTML = "<strong>Recent successful entries</strong>";
+    panel.replaceChildren();
+    const heading = document.createElement("strong");
+    heading.textContent = "Recent entries (last 3)";
+    panel.appendChild(heading);
     const list = document.createElement("div");
     list.style.cssText = "margin-top:6px;line-height:1.6";
     successfulEntryHistory.slice(-3).reverse().forEach(item => {
         const line = document.createElement("div");
-        line.textContent = `${item.id} → ${item.field}: ${item.mark}${item.warning ? "  W" : ""}`;
-        if (item.warning) line.title = "Speech recognition was ambiguous; please verify this entry.";
+        line.textContent = `${item.id} → ${item.field}: ${item.mark}${item.warning ? "  ⚠ verify" : ""}`;
+        line.style.cssText = "padding:3px 5px;border-radius:4px;overflow-wrap:anywhere;";
+        if (item.warning) {
+            line.style.background = "#fff2a8";
+            line.title = "Speech recognition used a best guess; verify this entry.";
+        }
         list.appendChild(line);
     });
     panel.appendChild(list);
@@ -810,23 +818,35 @@ function markSpeechWarning(row) {
     }
 }
 
-function numberWordsToDigits(text, expected) {
-    const words = text.toLowerCase().replace(/[^a-z0-9.\s-]/g, " ").trim().split(/\s+/).filter(Boolean);
-    const digits = {zero:"0",oh:"0",one:"1",two:"2",three:"3",four:"4",for:"4",five:"5",six:"6",seven:"7",eight:"8",ate:"8",nine:"9"};
-    if (words.length && words.every(w => digits[w] !== undefined)) return words.map(w => digits[w]).join("");
-    const small = {zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19};
+function numberWordsToDigits(text) {
+    const words = String(text).toLowerCase().replace(/[^a-z0-9.\s-]/g, " ").trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return "";
+    const digitWords = {zero:"0",oh:"0",one:"1",two:"2",three:"3",four:"4",five:"5",six:"6",seven:"7",eight:"8",nine:"9"};
+    if (words.every(word => digitWords[word] !== undefined)) return words.map(word => digitWords[word]).join("");
+    const small = {zero:0,oh:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19};
     const tens = {twenty:20,thirty:30,forty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90};
-    let total=0, current=0, ok=words.length>0;
-    for (const w of words) {
-        if (w in small) current += small[w];
-        else if (w in tens) current += tens[w];
-        else if (w === "hundred") current = Math.max(1,current)*100;
-        else if (w === "and" || w === "point") continue;
-        else if (/^\d+$/.test(w)) current = current*10 + Number(w);
-        else { ok=false; break; }
+    const pointIndex = words.indexOf("point");
+    if (pointIndex >= 0) {
+        if (pointIndex === 0 || pointIndex === words.length - 1) return "";
+        const integer = numberWordsToDigits(words.slice(0, pointIndex).join(" "));
+        const fractionalWords = words.slice(pointIndex + 1);
+        if (!integer || !fractionalWords.length) return "";
+        const fractional = fractionalWords.map(word => digitWords[word]).join("");
+        return fractionalWords.every(word => digitWords[word] !== undefined) ? `${integer}.${fractional}` : "";
     }
-    if (ok) { total += current; return String(total); }
-    return "";
+    let total = 0, current = 0;
+    for (const word of words) {
+        if (word in small) current += small[word];
+        else if (word in tens) current += tens[word];
+        else if (word === "hundred") current = Math.max(1, current) * 100;
+        else if (word === "thousand") { total += Math.max(1, current) * 1000; current = 0; }
+        else if (word === "million") { total += Math.max(1, current) * 1000000; current = 0; }
+        else if (word === "billion") { total += Math.max(1, current) * 1000000000; current = 0; }
+        else if (/^\d+(?:\.\d+)?$/.test(word)) current = current * 10 + Number(word);
+        else return "";
+    }
+    const result = total + current;
+    return Number.isFinite(result) ? String(result) : "";
 }
 
 async function ensureVoskModel() {
@@ -862,15 +882,25 @@ function ensureSpeechBridge() {
 }
 
 function speechStatus(message) {
+    const dialog = document.querySelector("#grade-entry-overlay > div");
     let el = document.getElementById("meh-speech-status");
     if (!el) {
         el = document.createElement("div");
         el.id = "meh-speech-status";
-        el.style.cssText = "position:fixed;right:14px;bottom:120px;z-index:1000002;background:#222;color:#fff;padding:8px 12px;border-radius:6px;font:13px Arial,sans-serif;max-width:280px";
-        document.body.appendChild(el);
+        el.style.cssText = "margin-top:10px;background:#222;color:#fff;padding:8px 10px;border-radius:6px;font:13px Arial,sans-serif;overflow-wrap:anywhere;";
+        if (dialog) dialog.appendChild(el);
+        else {
+            el.style.cssText += "position:fixed;right:14px;bottom:14px;z-index:1000003;max-width:280px;";
+            document.body.appendChild(el);
+        }
+    } else if (dialog && el.parentElement !== dialog) {
+        el.remove();
+        dialog.appendChild(el);
     }
     el.textContent = message;
-    if (!speechModeEnabled && !message.startsWith("Downloading") && !message.startsWith("Loading")) setTimeout(() => el.remove(), 3500);
+    if (!speechModeEnabled && !message.startsWith("Downloading") && !message.startsWith("Loading")) {
+        setTimeout(() => { if (!speechModeEnabled) el.remove(); }, 3500);
+    }
 }
 
 async function toggleSpeechMode() {
@@ -890,42 +920,51 @@ async function toggleSpeechMode() {
 }
 
 function processSpeechText(text) {
-    const parsed = numberWordsToDigits(text, "");
-    if (!parsed) return;
-    speechPending.push({value:parsed, ambiguous: text.trim().split(/\s+/).length > 1 && !text.trim().split(/\s+/).every(w => /^(zero|oh|one|two|three|four|for|five|six|seven|eight|ate|nine)$/.test(w))});
+    if (!document.getElementById("grade-entry-overlay") || !speechModeEnabled) return;
+    const parsed = numberWordsToDigits(text);
+    if (!parsed || !Number.isFinite(Number(parsed))) {
+        speechStatus("Numbers only: repeat the student ID or mark.");
+        return;
+    }
+    const isDigitSequence = text.trim().toLowerCase().split(/\s+/).every(word => /^(zero|oh|one|two|three|four|five|six|seven|eight|nine)$/.test(word));
+    speechPending.push({value:parsed, ambiguous: !isDigitSequence && !/^\d+(?:\.\d+)?$/.test(text.trim())});
     if (speechPending.length > 2) speechPending = speechPending.slice(-2);
-    speechStatus(`Recognized: ${speechPending.map(x=>x.value).join(" → ")}`);
+    speechStatus(`Recognized: ${speechPending.map(item => item.value).join(" → ")}`);
     clearTimeout(speechTimer);
     if (speechPending.length >= 2) {
         const pause = Math.max(300, Number(gradeEntryConfig?.speechPause ?? 1) * 1000);
-        speechTimer = setTimeout(() => submitSpeechEntry(), pause);
+        speechTimer = setTimeout(submitSpeechEntry, pause);
     }
 }
 
 function submitSpeechEntry() {
-    if (speechPending.length < 2) return;
+    if (speechPending.length < 2 || !speechModeEnabled) return;
     const [id, markEntry] = speechPending.slice(-2);
     speechPending = [];
     const suffix = id.value;
     const mark = Number(markEntry.value);
     if (!/^\d{3}$/.test(suffix) || !Number.isFinite(mark)) {
-        speechStatus("Could not parse ID/mark. Repeat both numbers."); return;
+        speechStatus("Best guess unavailable: repeat a 3-digit ID, then a mark."); return;
     }
     const idInput = document.querySelector("#grade-entry-overlay #meh-id-input");
     const markInput = document.querySelector("#grade-entry-overlay #meh-mark-input");
     const submitButton = document.querySelector("#grade-entry-overlay #meh-submit-button");
-    if (!idInput || !markInput || !submitButton) {
-        speechStatus("Open the grade-entry dialog before using speech mode.");
-        return;
-    }
+    if (!idInput || !markInput || !submitButton) { speechStatus("Open the grade-entry dialog before using speech mode."); return; }
     if (gradeEntryConfig?.fullMark != null && mark > gradeEntryConfig.fullMark) {
         speechStatus(`Mark exceeds full mark (${gradeEntryConfig.fullMark}).`); return;
     }
     idInput.value = suffix;
     markInput.value = String(mark);
-    speechWarningForNextEntry = !!(id.ambiguous || markEntry.ambiguous);
-    speechStatus(`Recognized ${suffix} → ${mark}${speechWarningForNextEntry ? " (W: verify)" : ""}`);
-    submitButton.click();
+    idInput.dispatchEvent(new Event("input", {bubbles:true}));
+    markInput.dispatchEvent(new Event("input", {bubbles:true}));
+    speechWarningForNextEntry = true;
+    if (gradeEntryConfig?.speechAutoSubmit) {
+        speechStatus(`Best guess: ${suffix} → ${mark}${speechWarningForNextEntry ? " — verify (yellow history entry)" : ""}. Submitting…`);
+        submitButton.click();
+    } else {
+        markInput.focus();
+        speechStatus(`Best guess: ${suffix} → ${mark}${speechWarningForNextEntry ? " — verify (yellow history entry)" : ""}. Press Enter to submit.`);
+    }
 }
 
 function stopSpeechMode() {
@@ -941,6 +980,50 @@ window.addEventListener("message", event => {
     if (event.data.type === "STATUS") speechStatus(event.data.message || "Listening…");
     if (event.data.type === "ERROR") { speechStatus(`Speech error: ${event.data.message}`); stopSpeechMode(); }
 });
+
+function applySpeechDialogLayout(overlay, dialog) {
+    if (!speechModeEnabled) return;
+    overlay.style.inset = "auto 14px 14px auto";
+    overlay.style.width = "min(440px, calc(100vw - 28px))";
+    overlay.style.height = "auto";
+    overlay.style.background = "transparent";
+    overlay.style.pointerEvents = "none";
+    overlay.style.alignItems = "flex-end";
+    overlay.style.justifyContent = "flex-end";
+    dialog.style.pointerEvents = "auto";
+    dialog.style.width = "min(390px, calc(100vw - 28px))";
+    dialog.style.maxWidth = "calc(100vw - 28px)";
+    dialog.style.padding = "14px";
+    const instruction = dialog.querySelector(".meh-entry-instruction");
+    if (instruction) instruction.style.display = "none";
+}
+
+function addSpeechToggle(dialog, overlay) {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.id = "meh-speech-toggle";
+    toggle.textContent = speechModeEnabled ? "Disable speech entry" : "Enable speech entry";
+    toggle.style.cssText = "margin-right:auto;padding:8px 10px;border:1px solid #888;border-radius:5px;cursor:pointer;";
+    toggle.addEventListener("click", async () => {
+        if (speechModeEnabled) {
+            stopSpeechMode();
+            overlay.style.cssText = `position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;font-family:Arial,sans-serif;`;
+            dialog.style.width = "440px";
+            dialog.style.maxWidth = "calc(100vw - 40px)";
+            dialog.style.padding = "24px";
+            toggle.textContent = "Enable speech entry";
+            showEntryToast();
+        } else {
+            await toggleSpeechMode();
+            if (speechModeEnabled) {
+                toggle.textContent = "Disable speech entry";
+                applySpeechDialogLayout(overlay, dialog);
+                speechStatus("Speech-to-entry is working. Say the student ID, pause, then the mark.");
+            }
+        }
+    });
+    return toggle;
+}
 
 // ============================================================
 // CREATE DIALOG
@@ -1034,6 +1117,7 @@ function createDialog(
         overlay
     );
 
+    applySpeechDialogLayout(overlay, dialog);
 
     return {
         overlay,
@@ -1352,6 +1436,7 @@ function configureGradeEntry(
             cancelButton.onclick =
                 () => {
 
+                    if (speechModeEnabled) stopSpeechMode();
                     overlay.remove();
                     hideEntryToast();
 
@@ -1568,6 +1653,7 @@ function askForGradeEntry() {
                 );
 
 
+            instruction.className = "meh-entry-instruction";
             instruction.innerHTML = `
                 <div style="
                     margin-bottom: 16px;
@@ -1956,6 +2042,8 @@ function askForGradeEntry() {
             // BUTTONS
             // ------------------------------------------------
 
+            buttons.appendChild(addSpeechToggle(dialog, overlay));
+
             buttons.appendChild(
                 cancelButton
             );
@@ -1990,6 +2078,9 @@ function askForGradeEntry() {
                 buttons
             );
 
+
+            applySpeechDialogLayout(overlay, dialog);
+            showEntryToast();
 
             setTimeout(
                 () =>
@@ -2374,6 +2465,7 @@ async function startInteractiveGradeEntry() {
 
     } finally {
 
+        if (!document.getElementById("grade-entry-overlay") && speechModeEnabled) stopSpeechMode();
         gradeEntryRunning =
             false;
     }
@@ -2460,13 +2552,7 @@ EXT.runtime.onMessage.addListener(
 
 
             default:
-
-                sendResponse({
-                    ok: false
-                });
-
-
-                return true;
+                return false;
         }
     }
 );
@@ -2499,14 +2585,6 @@ document.addEventListener(
 );
 
 
-// Period toggles speech-to-entry globally on the portal.
-document.addEventListener("keydown", event => {
-    if (event.key !== "." || event.ctrlKey || event.altKey || event.metaKey || event.repeat) return;
-    if (!document.getElementById("grade-entry-overlay")) return;
-    event.preventDefault();
-    event.stopPropagation();
-    toggleSpeechMode();
-}, true);
 
 // ============================================================
 // READY
