@@ -10,6 +10,9 @@ const field =
 const fullMark =
     document.getElementById("fullMark");
 
+const speechPause =
+    document.getElementById("speechPause");
+
 const startHotkey =
     document.getElementById("startHotkey");
 
@@ -238,7 +241,14 @@ function readConfig() {
     }
 
 
+    const pauseSeconds = Number(speechPause.value || 1);
+    if (!Number.isFinite(pauseSeconds) || pauseSeconds < 0.3 || pauseSeconds > 5) {
+        throw new Error("Speech pause must be between 0.3 and 5 seconds.");
+    }
+
     const config = {
+
+        speechPause: pauseSeconds,
 
         box:
             field.value,
@@ -433,6 +443,8 @@ clearButton.addEventListener(
 
         fullMark.value =
             config.fullMark ?? "";
+
+        speechPause.value = config.speechPause ?? 1;
 
 
         startHotkey.value =

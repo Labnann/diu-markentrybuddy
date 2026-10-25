@@ -91,6 +91,17 @@ let gradeEntryConfig =
 let gradeEntryRunning =
     false;
 
+let speechModeEnabled = false;
+let speechRecognizer = null;
+let speechModel = null;
+let speechStream = null;
+let speechAudioContext = null;
+let speechProcessor = null;
+let speechPending = [];
+let speechTimer = null;
+const successfulEntryHistory = [];
+let speechWarningForNextEntry = false;
+
 
 // ============================================================
 // FIELD NAMES
@@ -758,6 +769,180 @@ function hotkeyMatches(
 
 
 // ============================================================
+// RECENT ENTRIES + SPEECH STATUS
+// ============================================================
+function showEntryToast(entry) {
+    let panel = document.getElementById("meh-entry-history");
+    if (!panel) {
+        panel = document.createElement("div");
+        panel.id = "meh-entry-history";
+        panel.style.cssText = "position:fixed;right:14px;bottom:14px;z-index:1000001;width:260px;background:#fff;color:#222;border:1px solid #bbb;border-radius:8px;box-shadow:0 4px 18px #0003;padding:10px 12px;font:13px Arial,sans-serif;";
+        document.body.appendChild(panel);
+    }
+    if (!document.getElementById("grade-entry-overlay")) { panel.remove(); return; }
+    panel.innerHTML = "<strong>Recent successful entries</strong>";
+    const list = document.createElement("div");
+    list.style.cssText = "margin-top:6px;line-height:1.6";
+    successfulEntryHistory.slice(-3).reverse().forEach(item => {
+        const line = document.createElement("div");
+        line.textContent = `${item.id} → ${item.field}: ${item.mark}${item.warning ? "  W" : ""}`;
+        if (item.warning) line.title = "Speech recognition was ambiguous; please verify this entry.";
+        list.appendChild(line);
+    });
+    panel.appendChild(list);
+}
+
+function hideEntryToast() {
+    document.getElementById("meh-entry-history")?.remove();
+}
+
+function markSpeechWarning(row) {
+    if (!row) return;
+    let badge = row.querySelector(".meh-speech-warning");
+    if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "meh-speech-warning";
+        badge.textContent = " W";
+        badge.title = "Speech recognition used a best guess; verify this mark.";
+        badge.style.cssText = "color:#b45309;font-weight:bold;margin-left:4px";
+        const cell = row.children[ACTION_BOX] || row.lastElementChild;
+        if (cell) cell.appendChild(badge);
+    }
+}
+
+function numberWordsToDigits(text, expected) {
+    const words = text.toLowerCase().replace(/[^a-z0-9.\s-]/g, " ").trim().split(/\s+/).filter(Boolean);
+    const digits = {zero:"0",oh:"0",one:"1",two:"2",three:"3",four:"4",for:"4",five:"5",six:"6",seven:"7",eight:"8",ate:"8",nine:"9"};
+    if (words.length && words.every(w => digits[w] !== undefined)) return words.map(w => digits[w]).join("");
+    const small = {zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19};
+    const tens = {twenty:20,thirty:30,forty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90};
+    let total=0, current=0, ok=words.length>0;
+    for (const w of words) {
+        if (w in small) current += small[w];
+        else if (w in tens) current += tens[w];
+        else if (w === "hundred") current = Math.max(1,current)*100;
+        else if (w === "and" || w === "point") continue;
+        else if (/^\d+$/.test(w)) current = current*10 + Number(w);
+        else { ok=false; break; }
+    }
+    if (ok) { total += current; return String(total); }
+    return "";
+}
+
+async function ensureVoskModel() {
+    // The extension service worker downloads and caches the model in extension-origin IndexedDB.
+    // Transfer in small chunks so browser extension messaging does not need one huge payload.
+    const meta = await EXT.runtime.sendMessage({type: "MEH_MODEL_META"});
+    if (!meta?.ok) throw new Error(meta?.error || "Could not prepare the Vosk model.");
+    speechStatus("Preparing Vosk model from extension cache…");
+    const parts = [];
+    for (let offset = 0; offset < meta.size; offset += 512 * 1024) {
+        const chunk = await EXT.runtime.sendMessage({type: "MEH_MODEL_CHUNK", offset});
+        if (!chunk?.ok) throw new Error(chunk?.error || `Model download failed at byte ${offset}.`);
+        const raw = atob(chunk.base64);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+        parts.push(bytes);
+        if (offset === 0 || offset % (4 * 1024 * 1024) === 0) speechStatus(`Preparing Vosk model… ${Math.min(100, Math.round((chunk.end / meta.size) * 100))}%`);
+    }
+    return URL.createObjectURL(new Blob(parts, {type: "application/gzip"}));
+}
+
+let speechBridgePromise = null;
+function ensureSpeechBridge() {
+    if (speechBridgePromise) return speechBridgePromise;
+    speechBridgePromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = EXT.runtime.getURL("speech-page.js");
+        script.onload = () => { script.remove(); resolve(); };
+        script.onerror = () => reject(new Error("Could not initialize the speech bridge."));
+        (document.head || document.documentElement).appendChild(script);
+    });
+    return speechBridgePromise;
+}
+
+function speechStatus(message) {
+    let el = document.getElementById("meh-speech-status");
+    if (!el) {
+        el = document.createElement("div");
+        el.id = "meh-speech-status";
+        el.style.cssText = "position:fixed;right:14px;bottom:120px;z-index:1000002;background:#222;color:#fff;padding:8px 12px;border-radius:6px;font:13px Arial,sans-serif;max-width:280px";
+        document.body.appendChild(el);
+    }
+    el.textContent = message;
+    if (!speechModeEnabled && !message.startsWith("Downloading") && !message.startsWith("Loading")) setTimeout(() => el.remove(), 3500);
+}
+
+async function toggleSpeechMode() {
+    if (speechModeEnabled) { stopSpeechMode(); return; }
+    try {
+        speechStatus("Loading Vosk model…");
+        const modelBlobUrl = await ensureVoskModel();
+        await ensureSpeechBridge();
+        speechModeEnabled = true;
+        window.postMessage({ source: "MEH_CONTENT", type: "START_VOSK", modelUrl: modelBlobUrl }, "*");
+        speechStatus("Speech-to-entry ON. Say student ID, pause, then mark.");
+    } catch (e) {
+        stopSpeechMode();
+        speechStatus(`Speech mode failed: ${e.message}`);
+        console.error("Speech-to-entry initialization failed", e);
+    }
+}
+
+function processSpeechText(text) {
+    const parsed = numberWordsToDigits(text, "");
+    if (!parsed) return;
+    speechPending.push({value:parsed, ambiguous: text.trim().split(/\s+/).length > 1 && !text.trim().split(/\s+/).every(w => /^(zero|oh|one|two|three|four|for|five|six|seven|eight|ate|nine)$/.test(w))});
+    if (speechPending.length > 2) speechPending = speechPending.slice(-2);
+    speechStatus(`Recognized: ${speechPending.map(x=>x.value).join(" → ")}`);
+    clearTimeout(speechTimer);
+    if (speechPending.length >= 2) {
+        const pause = Math.max(300, Number(gradeEntryConfig?.speechPause ?? 1) * 1000);
+        speechTimer = setTimeout(() => submitSpeechEntry(), pause);
+    }
+}
+
+function submitSpeechEntry() {
+    if (speechPending.length < 2) return;
+    const [id, markEntry] = speechPending.slice(-2);
+    speechPending = [];
+    const suffix = id.value;
+    const mark = Number(markEntry.value);
+    if (!/^\d{3}$/.test(suffix) || !Number.isFinite(mark)) {
+        speechStatus("Could not parse ID/mark. Repeat both numbers."); return;
+    }
+    const idInput = document.querySelector("#grade-entry-overlay #meh-id-input");
+    const markInput = document.querySelector("#grade-entry-overlay #meh-mark-input");
+    const submitButton = document.querySelector("#grade-entry-overlay #meh-submit-button");
+    if (!idInput || !markInput || !submitButton) {
+        speechStatus("Open the grade-entry dialog before using speech mode.");
+        return;
+    }
+    if (gradeEntryConfig?.fullMark != null && mark > gradeEntryConfig.fullMark) {
+        speechStatus(`Mark exceeds full mark (${gradeEntryConfig.fullMark}).`); return;
+    }
+    idInput.value = suffix;
+    markInput.value = String(mark);
+    speechWarningForNextEntry = !!(id.ambiguous || markEntry.ambiguous);
+    speechStatus(`Recognized ${suffix} → ${mark}${speechWarningForNextEntry ? " (W: verify)" : ""}`);
+    submitButton.click();
+}
+
+function stopSpeechMode() {
+    speechModeEnabled = false;
+    clearTimeout(speechTimer); speechTimer = null; speechPending = [];
+    window.postMessage({ source: "MEH_CONTENT", type: "STOP_VOSK" }, "*");
+    document.getElementById("meh-speech-status")?.remove();
+}
+
+window.addEventListener("message", event => {
+    if (event.source !== window || event.data?.source !== "MEH_VOSK") return;
+    if (event.data.type === "RESULT") processSpeechText(event.data.text || "");
+    if (event.data.type === "STATUS") speechStatus(event.data.message || "Listening…");
+    if (event.data.type === "ERROR") { speechStatus(`Speech error: ${event.data.message}`); stopSpeechMode(); }
+});
+
+// ============================================================
 // CREATE DIALOG
 // ============================================================
 
@@ -1168,6 +1353,7 @@ function configureGradeEntry(
                 () => {
 
                     overlay.remove();
+                    hideEntryToast();
 
                     resolve(null);
                 };
@@ -1374,6 +1560,7 @@ function askForGradeEntry() {
                     ]}`
                 );
 
+            showEntryToast();
 
             const instruction =
                 document.createElement(
@@ -1438,6 +1625,7 @@ function askForGradeEntry() {
                 );
 
 
+            idInput.id = "meh-id-input";
             idInput.type =
                 "text";
 
@@ -1502,6 +1690,7 @@ function askForGradeEntry() {
                 );
 
 
+            markInput.id = "meh-mark-input";
             markInput.type =
                 "text";
 
@@ -1565,6 +1754,7 @@ function askForGradeEntry() {
                 () => {
 
                     overlay.remove();
+                    hideEntryToast();
 
                     resolve(null);
                 };
@@ -1576,6 +1766,7 @@ function askForGradeEntry() {
                 );
 
 
+            submitButton.id = "meh-submit-button";
             submitButton.innerText =
                 "Submit";
 
@@ -2141,6 +2332,13 @@ async function startInteractiveGradeEntry() {
                     actualId
             });
 
+            const speechWarning = speechWarningForNextEntry;
+            speechWarningForNextEntry = false;
+            if (speechWarning) markSpeechWarning(updatedRow);
+            successfulEntryHistory.push({id: actualId, mark: entry.mark, field: GRADE_FIELDS[gradeEntryConfig.box], warning: speechWarning});
+            while (successfulEntryHistory.length > 3) successfulEntryHistory.shift();
+            showEntryToast();
+
 
             console.log(
                 `${actualId} → ` +
@@ -2169,7 +2367,7 @@ async function startInteractiveGradeEntry() {
             // ------------------------------------------------
 
             overlay.remove();
-
+            hideEntryToast();
 
             await sleep(100);
         }
@@ -2301,6 +2499,15 @@ document.addEventListener(
 );
 
 
+// Period toggles speech-to-entry globally on the portal.
+document.addEventListener("keydown", event => {
+    if (event.key !== "." || event.ctrlKey || event.altKey || event.metaKey || event.repeat) return;
+    if (!document.getElementById("grade-entry-overlay")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    toggleSpeechMode();
+}, true);
+
 // ============================================================
 // READY
 // ============================================================
@@ -2313,6 +2520,7 @@ console.log(
 console.log(
     "Configuration is memory-only."
 );
+console.log("Speech-to-entry toggle: . (period); Vosk model cache is retained by the browser.");
 
 console.log(
     "Start-entry default: Alt+E"
