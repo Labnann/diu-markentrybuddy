@@ -2105,57 +2105,10 @@ function scrollUpdatedRowBelowDialog(
         return;
 
 
-    const dialog =
-        overlay?.querySelector(
-            "div"
-        );
-
-
-    if (!dialog) {
-
-        row.scrollIntoView({
-
-            behavior:
-                "smooth",
-
-            block:
-                "center"
-        });
-
-
-        return;
-    }
-
-
-    const dialogRect =
-        dialog.getBoundingClientRect();
-
-
-    const rowRect =
-        row.getBoundingClientRect();
-
-
-    const gap =
-        35;
-
-
-    const desiredTop =
-        dialogRect.bottom +
-        gap;
-
-
-    const difference =
-        rowRect.top -
-        desiredTop;
-
-
-    window.scrollBy({
-
-        top:
-            difference,
-
-        behavior:
-            "smooth"
+    row.scrollIntoView({
+        behavior: "auto",
+        block: "center",
+        inline: "nearest"
     });
 }
 
@@ -2440,15 +2393,6 @@ async function startInteractiveGradeEntry() {
             );
 
 
-            // ------------------------------------------------
-            // SCROLL
-            // ------------------------------------------------
-
-            scrollUpdatedRowBelowDialog(
-                updatedRow,
-                overlay
-            );
-
 
             await sleep(400);
 
@@ -2459,6 +2403,14 @@ async function startInteractiveGradeEntry() {
 
             overlay.remove();
             hideEntryToast();
+
+            // Scroll the updated row into view after closing
+            // the dialog, including when speech mode is minimized.
+            scrollUpdatedRowBelowDialog(
+                updatedRow,
+                overlay
+            );
+
 
             await sleep(100);
         }
